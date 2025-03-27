@@ -1,0 +1,6 @@
+.aider*
+.DS_Storeuv.lock
+.idea/
+.DS_Store
+subl
+uv.lock
