@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
 # dependencies = [
@@ -33,6 +34,20 @@ ENV_HOSTS = {
     "stage": "queuestagesvc.las.expertcity.com",
     "live": "queuesvc.las.expertcity.com"
 }
+
+def parse_filters(filter_args):
+    filters = []
+    for f in filter_args or []:
+        if "=" in f:
+            key, value = f.split("=", 1)
+            filters.append((key.strip(), value.strip()))
+    return filters
+
+def event_matches_filters(event_data, filters):
+    for key, value in filters:
+        if str(event_data.get(key, "")) != value:
+            return False
+    return True
 
 def monitor_queue(event, host, consumer, color, event_log, max_events=50):
     queue = f'account.service.events.{event}+'
@@ -90,21 +105,26 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
                 del event_log[0:len(event_log)-max_events]
         time.sleep(1)
 
-def render_table(event_logs, color_map, env_name, event_list):
+def render_table(event_logs, color_map, env_name, event_list, filters=None):
     title = f"Environment: {env_name.upper()} | Queues: {', '.join(event_list)}"
     table = Table(title=title, expand=True)
-    table.add_column("Queue", style="bold", min_width=6, max_width=10, no_wrap=True)
-    table.add_column("Timestamp", min_width=25, max_width=19, no_wrap=True)
-    table.add_column("Event Type", min_width=10, max_width=16, no_wrap=True)
+    table.add_column("Queue", style="bold", min_width=6, max_width=16, no_wrap=True)
+    table.add_column("Timestamp", min_width=25, max_width=20, no_wrap=True)
+    table.add_column("Event Type", min_width=10, max_width=20, no_wrap=True)
     table.add_column("Event Details", overflow="fold", no_wrap=False, ratio=1)
     for log in event_logs:
         queue = Text(str(log["queue"]), style=color_map[log["queue"]])
         details = Text(str(log["event_details"]), style=log["color"])
+        row_style = None
+        # Highlight if matches all filters
+        if filters and log.get("raw") and isinstance(log["raw"], dict) and event_matches_filters(log["raw"], filters):
+            row_style = "bold yellow"
         table.add_row(
             queue,
             str(log["timestamp"]),
             str(log["event_type"]),
-            details
+            details,
+            style=row_style
         )
     return table
 
@@ -118,7 +138,10 @@ def main():
     )
     parser.add_argument("--client", default=None, help="Client name for the queue (default: jupyter-<timestamp>)")
     parser.add_argument("--env", choices=ENV_HOSTS.keys(), default="ed1", type=str.lower, help="Environment to use (ed1, rc1, stage, live). Default: ed1")
+    parser.add_argument("--filter", action="append", help="Highlight events where field=value (can be specified multiple times)")
     args = parser.parse_args()
+
+    filters = parse_filters(args.filter)
 
     invalid = [e for e in args.event if e not in ALLOWED_EVENTS]
     if invalid:
@@ -147,9 +170,9 @@ def main():
 
     console = Console()
     try:
-        with Live(render_table(event_logs, color_map, args.env, args.event), console=console, refresh_per_second=2) as live:
+        with Live(render_table(event_logs, color_map, args.env, args.event, filters), console=console, refresh_per_second=2) as live:
             while True:
-                live.update(render_table(event_logs, color_map, args.env, args.event))
+                live.update(render_table(event_logs, color_map, args.env, args.event, filters))
                 time.sleep(0.5)
     except KeyboardInterrupt:
         print("Exiting...")
