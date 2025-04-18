@@ -1,5 +1,5 @@
 # /// script
-# requires-python ">=3.9"
+# requires-python = ">=3.9"
 # dependencies = ["httpx", "rich"]
 # ///
 
@@ -36,15 +36,13 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
     url = f'http://{host}/queue/rest2/{queue}{consumer}'
     while True:
         try:
-            res = httpx.get(url, params={'timeout': '5000'})
+            res = httpx.get(url)
             if res.text:
                 try:
                     data = json.loads(res.text)
-                    # Format timestamp user-friendly
                     ts = data.get("timestamp")
                     if ts:
                         try:
-                            # Handle epoch ms (int or str)
                             ts_int = int(ts)
                             dt = datetime.datetime.fromtimestamp(ts_int / 1000)
                             timestamp = dt.strftime(TIMESTAMP_FORMAT)
@@ -69,12 +67,14 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
                     "event_details": event_details,
                     "raw": data,
                 })
-                # Keep only the most recent max_events
                 if len(event_log) > max_events:
                     del event_log[0:len(event_log)-max_events]
         except Exception as e:
             err_str = str(e)
-            log_color = "bright_yellow" if "timeout" in err_str.lower() else color
+            if "timeout" in err_str.lower():
+                time.sleep(1)
+                continue
+            log_color = color
             event_log.append({
                 "queue": event,
                 "color": log_color,
