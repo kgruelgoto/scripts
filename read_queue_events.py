@@ -1,7 +1,7 @@
-# /// script
+# ```toml
 # requires-python = ">=3.9"
 # dependencies = ["httpx", "rich"]
-# ///
+# ```
 
 import httpx
 import datetime
