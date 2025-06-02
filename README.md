@@ -7,6 +7,9 @@ This directory contains command lines tools created in response to questions.
 > `uv run <script>.py [options]`
 > `uv run <link to raw github py> [options]`
 
+⚠️ If you do not have ZScaler certificates configured for python you will need to add `--native-tls` to your command to avoid certificate issues. ⚠️
+
+
 **Install `uv` if not present:**
 
 ```bash
