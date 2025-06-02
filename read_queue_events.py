@@ -108,23 +108,28 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
 def render_table(event_logs, color_map, env_name, event_list, filters=None):
     title = f"Environment: {env_name.upper()} | Queues: {', '.join(event_list)}"
     table = Table(title=title, expand=True)
-    table.add_column("Queue", style="bold", min_width=6, max_width=16, no_wrap=True)
-    table.add_column("Timestamp", min_width=25, max_width=20, no_wrap=True)
+    table.add_column("Queue", style="bold", min_width=10, max_width=20, no_wrap=True)
+    table.add_column("Timestamp", min_width=15, max_width=25, no_wrap=True)
     table.add_column("Event Type", min_width=10, max_width=20, no_wrap=True)
     table.add_column("Event Details", overflow="fold", no_wrap=False, ratio=1)
     for log in event_logs:
-        queue = Text(str(log["queue"]), style=color_map[log["queue"]])
-        details = Text(str(log["event_details"]), style=log["color"])
-        row_style = None
-        # Highlight if matches all filters
-        if filters and log.get("raw") and isinstance(log["raw"], dict) and event_matches_filters(log["raw"], filters):
-            row_style = "bold yellow"
+        match = filters and log.get("raw") and isinstance(log["raw"], dict) and event_matches_filters(log["raw"], filters)
+        highlight_style = "on yellow"
+        if match:
+            queue = Text(str(log["queue"]), style=f"{color_map[log['queue']]} {highlight_style}")
+            timestamp = Text(str(log["timestamp"]), style=highlight_style)
+            event_type = Text(str(log["event_type"]), style=highlight_style)
+            details = Text(str(log["event_details"]), style=highlight_style)
+        else:
+            queue = Text(str(log["queue"]), style=color_map[log["queue"]])
+            timestamp = Text(str(log["timestamp"]))
+            event_type = Text(str(log["event_type"]))
+            details = Text(str(log["event_details"]), style=log["color"])
         table.add_row(
             queue,
-            str(log["timestamp"]),
-            str(log["event_type"]),
-            details,
-            style=row_style
+            timestamp,
+            event_type,
+            details
         )
     return table
 
