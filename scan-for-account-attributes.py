@@ -258,8 +258,7 @@ def main(
         sys.exit(1)
 
     # Run the parallel scan
-    loop = asyncio.get_event_loop()
-    results = loop.run_until_complete(
+    results = asyncio.run(
         parallel_scan(
             base_url=url,
             name=name,
