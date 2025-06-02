@@ -20,7 +20,7 @@ import requests
 from tqdm import tqdm
 
 
-# Define the key range (for 32-bit integers)
+# Define the key range (for 64-bit integers)
 MIN_KEY = 0
 MAX_KEY = 2**63 - 1
 
@@ -131,7 +131,7 @@ async def scan_key_range(
                 start_key=current_start_key,
                 start_inclusive=start_inclusive,
                 end_key=end_key,
-                end_inclusive=False,  # Following the Java implementation which uses false
+                end_inclusive=False,
                 auth_headers=auth_headers,
                 count=count,
                 attribute_names=attribute_names
@@ -272,9 +272,6 @@ def main(
         )
     )
 
-    # Display summary
-    click.echo(f"\nFound {len(results)} matching accounts")
-
     # Output results
     if output:
         try:
@@ -299,6 +296,9 @@ def main(
     else:
         # Pretty print the results to console
         click.echo(json.dumps(results, indent=2))
+
+    # Display summary
+    click.echo(f"\nFound {len(results)} matching accounts")
 
 
 if __name__ == "__main__":
