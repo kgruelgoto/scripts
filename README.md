@@ -3,8 +3,9 @@
 This directory contains command lines tools created in response to questions. 
 
 **Each python tool can be run using [`uv`](https://github.com/astral-sh/uv):**
+`uv` will manage the environment and dependency installation. This is the recommended approach.
 > `uv run <script>.py [options]`
-
+> `uv run <link to raw github py> [options]`
 
 **Install `uv` if not present:**
 
@@ -12,7 +13,6 @@ This directory contains command lines tools created in response to questions.
 brew install uv
 ```
 or 
-
 ```bash
 curl -Ls https://astral.sh/uv/install.sh | sh
 ```
