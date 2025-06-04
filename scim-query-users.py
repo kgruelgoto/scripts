@@ -42,15 +42,15 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "ED1").upper()  # Default to ED1
 # Environment URLs
 ENV_URLS = {
     "ED1": {
-        "auth": "https://authenticationed1.lmiinc.test.expertcity.com",
+        "auth": "https://identity.ed1.goto.com",
         "identity": "https://iamed1.serversdev.getgo.com"
     },
     "RC1": {
-        "auth": "https://authenticationrc1.lmiinc.test.expertcity.com",
+        "auth": "https://identity.rc1.goto.com",
         "identity": "https://iamrc1.serversdev.getgo.com"
     },
     "STAGE": {
-        "auth": "https://authenticationstage.lmiinc.test.expertcity.com",
+        "auth": "https://identity.stage.goto.com",
         "identity": "https://iamstage.servers.getgo.com"
     },
     "LIVE": {
