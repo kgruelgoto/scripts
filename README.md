@@ -25,6 +25,7 @@ curl -Ls https://astral.sh/uv/install.sh | sh
 ## 🛠️ Tool List (with quick descriptions)
 
 - **aws_download_s3_access_logs.sh** – Download and extract ALB access logs from S3; scan for HTTP 50x errors.
+- **aws_sns_manage_events_subscriptions.py** – Manage SNS topic subscription permissions and view subscriptions.
 - **awsencrypt.sh** – Encrypt a value using AWS KMS CLI.
 - **awslogin.sh** – Simplify AWS SSO login and export env vars.
 - **read_queue_events.py** – Live-tail and filter events from account service event queues (rich output).
@@ -56,6 +57,52 @@ uv run aws_download_s3_access_logs.sh <region> <YYYY/MM/DD> <S3 prefix path>
 Usage: ./aws_download_s3_access_logs.sh <region> <YYYY/MM/DD> <S3 prefix path>
 Example: ./aws_download_s3_access_logs.sh us-east-1 2023/02/25 iam-live-alb-access-logs/AWSLogs/663917429408/elasticloadbalancing
 ```
+
+---
+
+### 📨 aws_sns_manage_events_subscriptions.py
+
+> Manage SNS topic subscription permissions and view subscriptions for topics following the pattern: bdi-identity-platform-{ENV}-account-service-events-{EVENTS}
+
+**Usage:**
+```bash
+# List subscription permissions
+uv run aws_sns_manage_events_subscriptions.py --profile default --region us-west-2 --env ed1 list [--events TYPE] [--account ID] [--output table|json|tree]
+
+# View actual subscriptions to topics
+uv run aws_sns_manage_events_subscriptions.py --profile default --region us-west-2 --env ed1 subscriptions [--events TYPE] [--protocol TYPE] [--output table|json|tree]
+
+# Add subscription permission
+uv run aws_sns_manage_events_subscriptions.py --profile default --region us-west-2 --env ed1 add --account ACCOUNT_ID --sid STATEMENT_ID [--events TYPE]
+
+# Remove subscription permission
+uv run aws_sns_manage_events_subscriptions.py --profile default --region us-west-2 --env ed1 remove --sid STATEMENT_ID [--events TYPE]
+```
+
+**Help Output:**
+```text
+Usage: aws_sns_manage_events_subscriptions.py [OPTIONS] COMMAND [ARGS]...
+
+  Manage SNS topic subscription permissions (cross-account safe).
+
+Options:
+  --profile TEXT  AWS profile to use  [required]
+  --env TEXT      Environment (ed1, rc1, stage, live)  [required]
+  --region TEXT   AWS region  [default: us-west-2]
+  --verbose, -v   Enable verbose output
+  --help          Show this message and exit.
+
+Commands:
+  add            Add subscription permission to SNS topics (resource policy).
+  list           List subscription permissions for SNS topics.
+  remove         Remove subscription permission from SNS topics.
+  subscriptions  List subscriptions for SNS topics.
+```
+
+**Output Formats:**
+- `table`: Default format showing data in a grid layout
+- `json`: Raw JSON output for programmatic use
+- `tree`: Hierarchical view showing relationships between topics, permissions, and subscriptions
 
 ---
 

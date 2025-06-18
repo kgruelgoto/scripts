@@ -5,3 +5,4 @@
 subl
 uv.lock
 richify.py
+__pycache__/
