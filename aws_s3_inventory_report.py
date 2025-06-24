@@ -83,14 +83,50 @@ def save_report_summary(summary, output_file):
         json.dump(summary, f, indent=2, default=str)
     click.echo(f"[INFO] Saved summary report to {output_file}")
 
+def scan_for_manifest_and_metadata(s3_client, bucket, prefix, output_file):
+    """Scan all S3 objects under a prefix, look for manifest.json, and collect metadata to CSV in one pass."""
+    paginator = s3_client.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+    file_count = 0
+    total_size = 0
+    sample_rows = []
+    manifest_keys = []
+    with open(output_file, "w", newline="") as f:
+        writer = pycsv.writer(f)
+        writer.writerow(["Key", "Size", "LastModified", "StorageClass"])
+        click.echo("Scanning S3 objects, looking for manifest.json and writing metadata to CSV...")
+        for page in pages:
+            for obj in page.get('Contents', []):
+                file_count += 1
+                total_size += obj.get('Size', 0)
+                if file_count <= 6:
+                    sample_rows.append([
+                        obj['Key'],
+                        obj.get('Size', ''),
+                        obj.get('LastModified', ''),
+                        obj.get('StorageClass', '')
+                    ])
+                if file_count % 1000 == 0:
+                    print(f"\rScanned {file_count} objects so far...", end="", flush=True)
+                writer.writerow([
+                    obj['Key'],
+                    obj.get('Size', ''),
+                    obj.get('LastModified', ''),
+                    obj.get('StorageClass', '')
+                ])
+                if obj['Key'].endswith('manifest.json'):
+                    manifest_keys.append(obj['Key'])
+        print(f"\rScanned {file_count} objects. Wrote results to {output_file}.")
+    click.echo("")
+    return manifest_keys, file_count, total_size, sample_rows
+
 @click.command()
 @click.option('--bucket', required=True, help='S3 bucket name')
 @click.option('--inventory-prefix', required=True, help='Prefix where S3 Inventory is stored')
 @click.option('--profile', default=None, help='AWS profile to use')
-def main(bucket, inventory_prefix, profile):
-    """Generate a report from the latest S3 Inventory manifest, or scan S3 if not found. Save results and summary."""
-    session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    s3 = session.client('s3')
+@click.option('--csv', 'csv_file', default=None, help='Path to a CSV file with S3 metadata to use instead of scanning')
+def main(bucket, inventory_prefix, profile, csv_file):
+    """Generate a report from the latest S3 Inventory manifest, scan S3 if not found, or use a provided CSV."""
     summary = {
         "bucket": bucket,
         "prefix": inventory_prefix,
@@ -100,10 +136,45 @@ def main(bucket, inventory_prefix, profile):
         "report_file": None,
         "sample_rows": [],
     }
+    if csv_file and os.path.exists(csv_file):
+        click.echo(f"[INFO] Using provided CSV file: {csv_file}")
+        import csv as pycsv
+        all_rows = []
+        total_size = 0
+        with open(csv_file, newline='') as f:
+            reader = pycsv.reader(f)
+            for i, row in enumerate(reader):
+                if i == 0:
+                    headers = row
+                else:
+                    all_rows.append(row)
+                    if len(row) > 1:
+                        try:
+                            total_size += int(row[1])
+                        except Exception:
+                            pass
+        sample_rows = [headers] + all_rows[:5]
+        click.echo("[INFO] Sample rows from provided CSV:")
+        click.echo(tabulate(sample_rows, headers="firstrow"))
+        click.echo(f"[INFO] Total objects in CSV: {len(all_rows)}")
+        summary["source"] = "csv_file"
+        summary["object_count"] = len(all_rows)
+        summary["total_size_bytes"] = total_size
+        summary["report_file"] = csv_file
+        summary["sample_rows"] = sample_rows
+        summary_file = f"s3_inventory_report_{bucket.replace('-', '_')}_summary.json"
+        save_report_summary(summary, summary_file)
+        return
+    session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+    s3 = session.client('s3')
     try:
-        try:
-            manifest_key = get_latest_inventory_manifest(s3, bucket, inventory_prefix)
-            click.echo(f"\n[INFO] Using manifest: {manifest_key}")
+        output_file = f"s3_inventory_report_{bucket.replace('-', '_')}_live.csv"
+        manifest_keys, file_count, total_size, sample_rows = scan_for_manifest_and_metadata(
+            s3, bucket, inventory_prefix, output_file
+        )
+        if manifest_keys:
+            manifest_key = sorted(manifest_keys)[-1]
+            click.echo(f"\n[INFO] Found manifest: {manifest_key}")
             manifest = download_and_parse_manifest(s3, bucket, manifest_key)
             if not manifest or 'files' not in manifest or not manifest['files']:
                 click.echo("[ERROR] Manifest found, but no inventory files listed.", err=True)
@@ -142,40 +213,8 @@ def main(bucket, inventory_prefix, profile):
                 summary["report_file"] = output_file
             else:
                 click.echo("[WARNING] No inventory data rows found.")
-        except Exception as manifest_error:
-            click.echo(f"[INFO] No manifest found or error occurred: {manifest_error}")
-            # Fallback: scan S3 directly
-            output_file = f"s3_inventory_report_{bucket.replace('-', '_')}_live.csv"
-            file_count = 0
-            total_size = 0
-            sample_rows = []
-            with open(output_file, "w", newline="") as f:
-                writer = pycsv.writer(f)
-                writer.writerow(["Key", "Size", "LastModified", "StorageClass"])
-                click.echo("Scanning S3 objects and writing to CSV...")
-                paginator = s3.get_paginator('list_objects_v2')
-                pages = paginator.paginate(Bucket=bucket, Prefix=inventory_prefix)
-                for page in pages:
-                    for obj in page.get('Contents', []):
-                        file_count += 1
-                        total_size += obj.get('Size', 0)
-                        if file_count <= 6:
-                            sample_rows.append([
-                                obj['Key'],
-                                obj.get('Size', ''),
-                                obj.get('LastModified', ''),
-                                obj.get('StorageClass', '')
-                            ])
-                        if file_count % 1000 == 0:
-                            print(f"\rScanned {file_count} objects so far...", end="", flush=True)
-                        writer.writerow([
-                            obj['Key'],
-                            obj.get('Size', ''),
-                            obj.get('LastModified', ''),
-                            obj.get('StorageClass', '')
-                        ])
-                print(f"\rScanned {file_count} objects. Wrote results to {output_file}.")
-            click.echo("")
+        else:
+            click.echo(f"[INFO] No manifest.json found. Using live scan data.")
             click.echo(f"[INFO] Saved full scan data to {output_file}")
             if sample_rows:
                 click.echo("[INFO] Sample rows from scan:")
