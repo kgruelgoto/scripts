@@ -1,12 +1,11 @@
 import requests
 import logging
 from collections import defaultdict
-from time import sleep
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Any, Tuple
-import functools
 import click
+from tqdm import tqdm
+import time
 
 
 ROLE_NAME = "ROLE_EXT_ADMIN"
@@ -32,35 +31,55 @@ def generate_key_ranges(partitions: int) -> List[Tuple[int, int]]:
         ranges.append((start, end))
     return ranges
 
-def fetch_licenses_by_role_and_key_range(role, start_key, end_key, api_base_url, headers) -> List[Dict[str, Any]]:
+async def fetch_licenses_by_role_and_key_range(role, start_key, end_key, api_base_url, headers) -> List[Dict[str, Any]]:
     all_licenses = []
     start = start_key
-    while True:
-        params = {"role": role, "count": 100, "startKey": start, "endKey": end_key, "startInclusive": True, "endInclusive": False, "attributeNames": "key,userKeys,accountKey,enabled"}
-        url = f"{api_base_url}/licenses"
-        resp = requests.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        licenses = resp.json()
-        if not licenses:
-            break
-        all_licenses.extend(licenses)
-        if len(licenses) < 100:
-            break
-        start = licenses[-1]["key"]
+    max_retries = 5
+    with tqdm(desc=f"Scanning {start_key} to {end_key}", leave=False) as pbar:
+        while True:
+            params = {"role": role, "count": 100, "startKey": start, "endKey": end_key, "startInclusive": True, "endInclusive": False, "attributeNames": "key,userKeys,accountKey,enabled"}
+            url = f"{api_base_url}/licenses"
+            for attempt in range(max_retries):
+                try:
+                    resp = requests.get(url, headers=headers, params=params)
+                    resp.raise_for_status()
+                    break
+                except requests.exceptions.ConnectionError as e:
+                    logger.warning(f"Connection error: {e}. Retrying ({attempt+1}/{max_retries})...")
+                    time.sleep(2 ** attempt)
+                except Exception as e:
+                    logger.error(f"Unexpected error: {e}")
+                    return all_licenses
+            else:
+                logger.error(f"Max retries exceeded for {url}. Skipping this range.")
+                return all_licenses
+
+            licenses = resp.json()
+            if not licenses:
+                break
+            all_licenses.extend(licenses)
+            pbar.update(len(licenses))
+
+            if len(licenses) < 100:
+                break
+            start = licenses[-1]["key"]
     return all_licenses
 
 async def parallel_fetch_licenses(role, partitions, api_base_url, headers) -> List[Dict[str, Any]]:
     ranges = generate_key_ranges(partitions)
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor() as executor:
-        tasks = [
-            loop.run_in_executor(
-                executor,
-                functools.partial(fetch_licenses_by_role_and_key_range, role, start, end, api_base_url, headers)
+    tasks = []
+    for start, end in ranges:
+        tasks.append(
+            fetch_licenses_by_role_and_key_range(
+                role=role,
+                api_base_url=api_base_url,
+                start_key=start,
+                end_key=end,
+                headers=headers
             )
-            for start, end in ranges
-        ]
-        results = await asyncio.gather(*tasks)
+        )
+
+    results = await asyncio.gather(*tasks)
     return [item for sublist in results for item in sublist]
 
 def move_user_to_license(user_id, target_license_key, api_base_url, headers):
