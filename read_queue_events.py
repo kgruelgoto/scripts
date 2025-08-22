@@ -14,6 +14,8 @@ import argparse
 import sys
 import json
 import threading
+from collections import deque
+from typing import List, Tuple, Dict, Any, Optional
 from rich.live import Live
 from rich.table import Table
 from rich.console import Console
@@ -35,7 +37,7 @@ ENV_HOSTS = {
     "live": "queuesvc.las.expertcity.com"
 }
 
-def parse_filters(filter_args):
+def parse_filters(filter_args: Optional[List[str]]) -> List[Tuple[str, str]]:
     filters = []
     for f in filter_args or []:
         if "=" in f:
@@ -43,18 +45,18 @@ def parse_filters(filter_args):
             filters.append((key.strip(), value.strip()))
     return filters
 
-def event_matches_filters(event_data, filters):
+def event_matches_filters(event_data: Dict[str, Any], filters: List[Tuple[str, str]]) -> bool:
     for key, value in filters:
         if str(event_data.get(key, "")) != value:
             return False
     return True
 
-def monitor_queue(event, host, consumer, color, event_log, max_events=50):
+def monitor_queue(event: str, host: str, consumer: str, color: str, event_log: deque, max_events: int = 50, polling_interval: float = 1.0, request_timeout: float = 10.0, log_file_path: Optional[str] = None) -> None:
     queue = f'account.service.events.{event}+'
     url = f'http://{host}/queue/rest2/{queue}{consumer}'
     while True:
         try:
-            res = httpx.get(url)
+            res = httpx.get(url, timeout=request_timeout)
             if res.text:
                 try:
                     data = json.loads(res.text)
@@ -85,13 +87,48 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
                     "event_details": event_details,
                     "raw": data,
                 })
-                if len(event_log) > max_events:
-                    del event_log[0:len(event_log)-max_events]
+                
+                # Log to file if specified
+                if log_file_path:
+                    log_entry = f"[{timestamp}] {event} | {event_type} | {event_details}\n"
+                    try:
+                        with open(log_file_path, 'a', encoding='utf-8') as f:
+                            f.write(log_entry)
+                    except Exception as log_err:
+                        pass  # Don't let logging errors break monitoring
+                
+                while len(event_log) > max_events:
+                    event_log.popleft()
+        except (httpx.TimeoutException, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+            time.sleep(polling_interval)
+            continue
+        except httpx.RequestError as e:
+            err_str = str(e)
+            log_color = color
+            event_log.append({
+                "queue": event,
+                "color": log_color,
+                "timestamp": datetime.datetime.now().strftime(TIMESTAMP_FORMAT),
+                "event_type": "REQUEST_ERROR",
+                "event_details": err_str,
+                "raw": err_str,
+            })
+            
+            # Log error to file if specified
+            if log_file_path:
+                log_entry = f"[{datetime.datetime.now().strftime(TIMESTAMP_FORMAT)}] {event} | REQUEST_ERROR | {err_str}\n"
+                try:
+                    with open(log_file_path, 'a', encoding='utf-8') as f:
+                        f.write(log_entry)
+                except Exception:
+                    pass
+            
+            while len(event_log) > max_events:
+                event_log.popleft()
+            time.sleep(polling_interval)
+            continue
         except Exception as e:
             err_str = str(e)
-            if "timeout" in err_str.lower():
-                time.sleep(1)
-                continue
             log_color = color
             event_log.append({
                 "queue": event,
@@ -101,30 +138,41 @@ def monitor_queue(event, host, consumer, color, event_log, max_events=50):
                 "event_details": err_str,
                 "raw": err_str,
             })
-            if len(event_log) > max_events:
-                del event_log[0:len(event_log)-max_events]
-        time.sleep(1)
+            
+            # Log general error to file if specified  
+            if log_file_path:
+                log_entry = f"[{datetime.datetime.now().strftime(TIMESTAMP_FORMAT)}] {event} | ERROR | {err_str}\n"
+                try:
+                    with open(log_file_path, 'a', encoding='utf-8') as f:
+                        f.write(log_entry)
+                except Exception:
+                    pass
+            
+            while len(event_log) > max_events:
+                event_log.popleft()
+        time.sleep(polling_interval)
 
-def render_table(event_logs, color_map, env_name, event_list, filters=None):
+def render_table(event_logs: deque, color_map: Dict[str, str], env_name: str, event_list: List[str], filters: Optional[List[Tuple[str, str]]] = None) -> Table:
     title = f"Environment: {env_name.upper()} | Queues: {', '.join(event_list)}"
+    if filters:
+        filter_desc = ", ".join([f"{k}={v}" for k, v in filters])
+        title += f" | Filters: {filter_desc}"
     table = Table(title=title, expand=True)
     table.add_column("Queue", style="bold", min_width=10, max_width=20, no_wrap=True)
     table.add_column("Timestamp", min_width=15, max_width=25, no_wrap=True)
     table.add_column("Event Type", min_width=10, max_width=20, no_wrap=True)
     table.add_column("Event Details", overflow="fold", no_wrap=False, ratio=1)
+    
     for log in event_logs:
-        match = filters and log.get("raw") and isinstance(log["raw"], dict) and event_matches_filters(log["raw"], filters)
-        highlight_style = "on yellow"
-        if match:
-            queue = Text(str(log["queue"]), style=f"{color_map[log['queue']]} {highlight_style}")
-            timestamp = Text(str(log["timestamp"]), style=highlight_style)
-            event_type = Text(str(log["event_type"]), style=highlight_style)
-            details = Text(str(log["event_details"]), style=highlight_style)
-        else:
-            queue = Text(str(log["queue"]), style=color_map[log["queue"]])
-            timestamp = Text(str(log["timestamp"]))
-            event_type = Text(str(log["event_type"]))
-            details = Text(str(log["event_details"]), style=log["color"])
+        # If filters are specified, only show events that match
+        if filters:
+            if not (log.get("raw") and isinstance(log["raw"], dict) and event_matches_filters(log["raw"], filters)):
+                continue
+        
+        queue = Text(str(log["queue"]), style=color_map[log["queue"]])
+        timestamp = Text(str(log["timestamp"]))
+        event_type = Text(str(log["event_type"]))
+        details = Text(str(log["event_details"]), style=log["color"])
         table.add_row(
             queue,
             timestamp,
@@ -133,7 +181,7 @@ def render_table(event_logs, color_map, env_name, event_list, filters=None):
         )
     return table
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Read events from one or more account service event queues concurrently.")
     event_list = ", ".join(ALLOWED_EVENTS)
     parser.add_argument(
@@ -143,10 +191,27 @@ def main():
     )
     parser.add_argument("--client", default=None, help="Client name for the queue (default: jupyter-<timestamp>)")
     parser.add_argument("--env", choices=ENV_HOSTS.keys(), default="ed1", type=str.lower, help="Environment to use (ed1, rc1, stage, live). Default: ed1")
-    parser.add_argument("--filter", action="append", help="Highlight events where field=value (can be specified multiple times)")
+    parser.add_argument("--filter", action="append", help="Only show events where field=value (can be specified multiple times)")
+    parser.add_argument("--max-events", type=int, default=50, help="Maximum number of events to keep in memory (default: 50)")
+    parser.add_argument("--polling-interval", type=float, default=1.0, help="Polling interval in seconds (default: 1.0)")
+    parser.add_argument("--request-timeout", type=float, default=10.0, help="HTTP request timeout in seconds (default: 10.0)")
+    parser.add_argument("--refresh-rate", type=int, default=2, help="Table refresh rate per second (default: 2)")
+    parser.add_argument("--log-file", type=str, help="Path to log file for plain text output")
+    parser.add_argument("--no-display", action="store_true", help="Disable table display, only log to file (requires --log-file)")
     args = parser.parse_args()
 
     filters = parse_filters(args.filter)
+    
+    if args.no_display and not args.log_file:
+        print("Error: --no-display requires --log-file to be specified")
+        sys.exit(1)
+
+    if filters:
+        filter_desc = f"Filtering events where: {', '.join([f'{k}={v}' for k, v in filters])}"
+        print(filter_desc)
+        if not args.no_display:
+            print("Only matching events will be displayed.")
+        print()
 
     invalid = [e for e in args.event if e not in ALLOWED_EVENTS]
     if invalid:
@@ -165,22 +230,33 @@ def main():
     for idx, event in enumerate(args.event):
         color_map[event] = COLORS[idx % len(COLORS)]
 
-    event_logs = []
+    event_logs: deque = deque()
     threads = []
     for event in args.event:
         color = color_map[event]
-        t = threading.Thread(target=monitor_queue, args=(event, host, consumer, color, event_logs), daemon=True)
+        t = threading.Thread(target=monitor_queue, args=(event, host, consumer, color, event_logs, args.max_events, args.polling_interval, args.request_timeout, args.log_file), daemon=True)
         t.start()
         threads.append(t)
 
-    console = Console()
-    try:
-        with Live(render_table(event_logs, color_map, args.env, args.event, filters), console=console, refresh_per_second=2) as live:
+    if args.log_file:
+        print(f"Logging events to: {args.log_file}")
+        
+    if args.no_display:
+        print("Running in file-only mode. Press Ctrl+C to stop.")
+        try:
             while True:
-                live.update(render_table(event_logs, color_map, args.env, args.event, filters))
-                time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("Exiting...")
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+    else:
+        console = Console()
+        try:
+            with Live(render_table(event_logs, color_map, args.env, args.event, filters), console=console, refresh_per_second=args.refresh_rate) as live:
+                while True:
+                    live.update(render_table(event_logs, color_map, args.env, args.event, filters))
+                    time.sleep(0.5 / args.refresh_rate)
+        except KeyboardInterrupt:
+            print("Exiting...")
 
 if __name__ == "__main__":
     main()
