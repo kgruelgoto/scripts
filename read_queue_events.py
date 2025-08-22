@@ -51,7 +51,7 @@ def event_matches_filters(event_data: Dict[str, Any], filters: List[Tuple[str, s
             return False
     return True
 
-def monitor_queue(event: str, host: str, consumer: str, color: str, event_log: deque, max_events: int = 50, polling_interval: float = 1.0, request_timeout: float = 10.0, log_file_path: Optional[str] = None) -> None:
+def monitor_queue(event: str, host: str, consumer: str, color: str, event_log: deque, max_events: int = 50, polling_interval: float = 1.0, request_timeout: float = 10.0, log_file_path: Optional[str] = None, filters: Optional[List[Tuple[str, str]]] = None) -> None:
     queue = f'account.service.events.{event}+'
     url = f'http://{host}/queue/rest2/{queue}{consumer}'
     while True:
@@ -88,14 +88,19 @@ def monitor_queue(event: str, host: str, consumer: str, color: str, event_log: d
                     "raw": data,
                 })
                 
-                # Log to file if specified
+                # Log to file if specified and event matches filters (if any)
                 if log_file_path:
-                    log_entry = f"[{timestamp}] {event} | {event_type} | {event_details}\n"
-                    try:
-                        with open(log_file_path, 'a', encoding='utf-8') as f:
-                            f.write(log_entry)
-                    except Exception as log_err:
-                        pass  # Don't let logging errors break monitoring
+                    should_log = True
+                    if filters and isinstance(data, dict):
+                        should_log = event_matches_filters(data, filters)
+                    
+                    if should_log:
+                        log_entry = f"[{timestamp}] {event} | {event_type} | {event_details}\n"
+                        try:
+                            with open(log_file_path, 'a', encoding='utf-8') as f:
+                                f.write(log_entry)
+                        except Exception as log_err:
+                            pass  # Don't let logging errors break monitoring
                 
                 while len(event_log) > max_events:
                     event_log.popleft()
@@ -234,7 +239,7 @@ def main() -> None:
     threads = []
     for event in args.event:
         color = color_map[event]
-        t = threading.Thread(target=monitor_queue, args=(event, host, consumer, color, event_logs, args.max_events, args.polling_interval, args.request_timeout, args.log_file), daemon=True)
+        t = threading.Thread(target=monitor_queue, args=(event, host, consumer, color, event_logs, args.max_events, args.polling_interval, args.request_timeout, args.log_file, filters), daemon=True)
         t.start()
         threads.append(t)
 
